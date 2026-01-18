@@ -20,7 +20,8 @@ function pickInvoiceNumber(cells: string[]) {
 }
 
 export async function scrapeStripeInvoices(page: Page, range: DateRange | null) {
-  await page.waitForLoadState("networkidle");
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
 
   const rows = await page.evaluate(() => {
     const collected: Array<{ cells: string[]; link?: string }> = [];

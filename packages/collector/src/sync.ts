@@ -13,8 +13,43 @@ import { ensureDir, getProfileDir, getScrapeDir } from "./utils/paths.js";
 import { captureSnapshot } from "./utils/snapshot.js";
 import { loadPdfPayload, sendIngest } from "./ingest.js";
 
-async function collectInvoices(providerId: ProviderId, range: DateRange | null) {
-  const provider = getProvider(providerId);
+const CDP_URL = process.env.AICOSTLEDGER_CDP_URL;
+
+function pickStripePortalLink(links: string[]) {
+  const candidates = links
+    .map((link) => link.trim())
+    .filter(Boolean)
+    .filter((link) => {
+      const lower = link.toLowerCase();
+      if (!lower.includes("stripe.com")) {
+        return false;
+      }
+      if (lower.includes("invoice.stripe.com")) {
+        return false;
+      }
+      return (
+        lower.includes("billing.stripe.com") ||
+        lower.includes("stripe.com/billing") ||
+        lower.includes("customer-portal") ||
+        lower.includes("portal")
+      );
+    });
+
+  return candidates[0] ?? null;
+}
+
+async function getContext(providerId: ProviderId) {
+  if (CDP_URL) {
+    const browser = await chromium.connectOverCDP(CDP_URL, { timeout: 60_000 });
+    const context = browser.contexts()[0] ?? (await browser.newContext());
+    return {
+      context,
+      close: async () => {
+        // No-op: avoid closing the user's Chrome session.
+      }
+    };
+  }
+
   const profileDir = getProfileDir(providerId);
   try {
     const files = await fs.readdir(profileDir);
@@ -22,13 +57,24 @@ async function collectInvoices(providerId: ProviderId, range: DateRange | null) 
       throw new Error("Profile directory is empty");
     }
   } catch {
-    throw new Error(`No session found for ${provider.label}. Run connect first.`);
+    throw new Error(`No session found for ${getProvider(providerId).label}. Run connect first.`);
   }
 
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: true,
     viewport: { width: 1365, height: 900 }
   });
+
+  return {
+    context,
+    close: async () => {
+      await context.close();
+    }
+  };
+}
+
+async function collectInvoices(context: Awaited<ReturnType<typeof getContext>>["context"], providerId: ProviderId, range: DateRange | null) {
+  const provider = getProvider(providerId);
   const page = await context.newPage();
   page.setDefaultTimeout(60_000);
 
@@ -37,8 +83,22 @@ async function collectInvoices(providerId: ProviderId, range: DateRange | null) 
 
   for (const url of provider.billingUrls) {
     lastUrl = url;
-    await page.goto(url, { waitUntil: "networkidle" });
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
     await page.waitForTimeout(1000);
+
+    const stripeLinks = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll("a[href*='stripe.com']")).map(
+        (anchor) => (anchor as HTMLAnchorElement).href
+      );
+    });
+    const stripeHref = pickStripePortalLink(stripeLinks);
+
+    if (stripeHref) {
+      lastUrl = stripeHref;
+      await page.goto(stripeHref, { waitUntil: "domcontentloaded" });
+      await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
+    }
 
     if (await isStripePortal(page)) {
       invoices = await scrapeStripeInvoices(page, range);
@@ -53,11 +113,11 @@ async function collectInvoices(providerId: ProviderId, range: DateRange | null) 
 
   if (!invoices.length) {
     await captureSnapshot(page, providerId, "no-invoices");
-    await context.close();
+    await page.close().catch(() => undefined);
     throw new Error(`No invoices found at ${lastUrl}`);
   }
 
-  await context.close();
+  await page.close().catch(() => undefined);
   return invoices;
 }
 
@@ -73,16 +133,14 @@ export async function syncProvider(params: {
   const startedAt = new Date().toISOString();
   const range = buildMonthRange(params.from, params.to);
 
-  const invoices = await collectInvoices(provider.id, range);
+  const contextInfo = await getContext(provider.id);
+  const invoices = await collectInvoices(contextInfo.context, provider.id, range);
   const items: LedgerItemInput[] = [];
   const pdfPayloads = [] as Awaited<ReturnType<typeof loadPdfPayload>>[];
   const scrapeDir = getScrapeDir(provider.id, runId);
   await ensureDir(scrapeDir);
 
-  const context = await chromium.launchPersistentContext(getProfileDir(provider.id), {
-    headless: true,
-    viewport: { width: 1365, height: 900 }
-  });
+  const context = contextInfo.context;
 
   for (const invoice of invoices) {
     const id = stableId(
@@ -114,7 +172,7 @@ export async function syncProvider(params: {
     });
   }
 
-  await context.close();
+  await contextInfo.close();
 
   await sendIngest({
     backendUrl: params.backendUrl,

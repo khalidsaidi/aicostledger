@@ -36,8 +36,11 @@ export const PROVIDERS: ProviderConfig[] = [
   {
     id: "anthropic_api",
     label: "Anthropic API",
-    startUrl: "https://console.anthropic.com/settings/billing",
-    billingUrls: ["https://console.anthropic.com/settings/billing"]
+    startUrl: "https://platform.claude.com/settings/billing",
+    billingUrls: [
+      "https://platform.claude.com/settings/billing",
+      "https://console.anthropic.com/settings/billing"
+    ]
   },
   {
     id: "cursor",
