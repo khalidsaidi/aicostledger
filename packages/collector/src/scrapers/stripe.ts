@@ -42,6 +42,29 @@ export async function scrapeStripeInvoices(page: Page, range: DateRange | null) 
     return collected;
   });
 
+  const portalRows = rows.length
+    ? []
+    : await page.evaluate(() => {
+        return Array.from(
+          document.querySelectorAll('[data-testid="billing-portal-invoice-row"]')
+        ).map((row) => {
+          const spans = Array.from(row.querySelectorAll("span"))
+            .map((span) => (span.textContent || "").trim())
+            .filter(Boolean);
+          const descriptionEl = row.querySelector(
+            '[data-testid="billing-portal-invoice-description"]'
+          ) as HTMLElement | null;
+          const description =
+            descriptionEl?.getAttribute("title") || descriptionEl?.textContent?.trim() || "";
+          const linkEl =
+            (row.closest("a[href]") as HTMLAnchorElement | null) ||
+            (row.querySelector("a[href]") as HTMLAnchorElement | null);
+          const href = linkEl?.getAttribute("href") || "";
+          const link = href ? new URL(href, document.baseURI).toString() : undefined;
+          return { spans, description, link };
+        });
+      });
+
   const invoices: InvoiceRecord[] = [];
 
   for (const row of rows) {
@@ -73,6 +96,28 @@ export async function scrapeStripeInvoices(page: Page, range: DateRange | null) 
       currency: amount.currency,
       description: description || "Stripe invoice",
       invoiceNumber: pickInvoiceNumber(cells),
+      invoiceUrl: row.link
+    });
+  }
+
+  for (const row of portalRows) {
+    const dateCell = row.spans.find((cell) => parseDateCell(cell));
+    const date = dateCell ? parseDateCell(dateCell) : null;
+    if (!date || !withinRange(date, range)) {
+      continue;
+    }
+
+    const amountCell = row.spans.find((cell) => parseAmount(cell));
+    const amount = amountCell ? parseAmount(amountCell) : null;
+    if (!amount) {
+      continue;
+    }
+
+    invoices.push({
+      occurredAt: date.toISOString(),
+      amountCents: amount.amountCents,
+      currency: amount.currency,
+      description: row.description || "Stripe invoice",
       invoiceUrl: row.link
     });
   }

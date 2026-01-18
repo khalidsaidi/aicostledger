@@ -2,6 +2,8 @@ import type { BrowserContext, Page } from "playwright";
 import type { InvoiceRecord } from "../types.js";
 import { withinRange, type DateRange } from "../utils/dates.js";
 import { captureSnapshot } from "../utils/snapshot.js";
+import { isStripePortal } from "./portal.js";
+import { scrapeStripeInvoices } from "./stripe.js";
 
 type CursorInvoice = {
   invoiceId: string;
@@ -28,6 +30,12 @@ const CURSOR_PORTAL_URLS = [
 
 const CLICK_PATTERNS = /(billing|invoice|subscription|payment|plan|account settings|manage)/i;
 const SKIP_PATTERNS = /(log out|sign out|cookie|privacy|terms|download)/i;
+const STRIPE_PORTAL_HINTS = [
+  "billing.stripe.com",
+  "stripe.com/billing",
+  "customer-portal",
+  "portal"
+];
 
 function mapInvoice(invoice: CursorInvoice, range: DateRange | null): InvoiceRecord | null {
   const date = new Date(invoice.date);
@@ -49,6 +57,35 @@ function mapInvoice(invoice: CursorInvoice, range: DateRange | null): InvoiceRec
 
 function isInvoiceRequest(url: string) {
   return url.includes("/api/dashboard/list-invoices");
+}
+
+function isStripePortalUrl(url: string) {
+  const lower = url.toLowerCase();
+  if (!lower.includes("stripe.com")) {
+    return false;
+  }
+  if (lower.includes("invoice.stripe.com") || lower.includes("js.stripe.com")) {
+    return false;
+  }
+  return STRIPE_PORTAL_HINTS.some((hint) => lower.includes(hint));
+}
+
+function pickStripePortalLink(links: string[]) {
+  const candidates = links
+    .map((link) => link.trim())
+    .filter(Boolean)
+    .filter((link) => {
+      const lower = link.toLowerCase();
+      if (!lower.includes("stripe.com")) {
+        return false;
+      }
+      if (lower.includes("invoice.stripe.com") || lower.includes("js.stripe.com")) {
+        return false;
+      }
+      return STRIPE_PORTAL_HINTS.some((hint) => lower.includes(hint));
+    });
+
+  return candidates[0] ?? null;
 }
 
 async function fetchInvoicePages(page: Page, payload: CursorInvoiceRequest["payload"]) {
@@ -82,6 +119,55 @@ async function fetchInvoicePages(page: Page, payload: CursorInvoiceRequest["payl
   }, payload);
 
   return invoices;
+}
+
+async function findStripePortalLink(page: Page) {
+  const links = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll("a[href]")).map(
+      (anchor) => (anchor as HTMLAnchorElement).href
+    );
+  });
+  return pickStripePortalLink(links);
+}
+
+async function findStripePortalPage(context: BrowserContext) {
+  for (const candidate of context.pages()) {
+    if (isStripePortalUrl(candidate.url())) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+async function resolveStripePortal(context: BrowserContext, page: Page) {
+  if (isStripePortalUrl(page.url())) {
+    return page;
+  }
+
+  const link = await findStripePortalLink(page);
+  if (link) {
+    await page.goto(link, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
+    if (isStripePortalUrl(page.url())) {
+      return page;
+    }
+  }
+
+  const portalPage = await findStripePortalPage(context);
+  if (portalPage && isStripePortalUrl(portalPage.url())) {
+    return portalPage;
+  }
+
+  const currentUrl = page.url().toLowerCase();
+  if (
+    currentUrl.includes("stripe.com") &&
+    !currentUrl.includes("invoice.stripe.com") &&
+    !currentUrl.includes("js.stripe.com") &&
+    (await isStripePortal(page))
+  ) {
+    return page;
+  }
+
+  return null;
 }
 
 async function clickBillingTargets(page: Page) {
@@ -129,19 +215,42 @@ export async function collectCursorInvoices(context: BrowserContext, range: Date
   page.setDefaultTimeout(20_000);
   page.setDefaultNavigationTimeout(20_000);
   let invoiceRequest: CursorInvoiceRequest | null = null;
+  let stripePortalPage: Page | null = null;
 
   for (const url of CURSOR_PORTAL_URLS) {
     const requestPromise = findInvoiceRequest(page, 12_000);
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
     await page.waitForTimeout(1500);
+    stripePortalPage = await resolveStripePortal(context, page);
+    if (!stripePortalPage) {
+      await clickBillingTargets(page);
+      stripePortalPage = await resolveStripePortal(context, page);
+    }
+    if (stripePortalPage) {
+      break;
+    }
     invoiceRequest = await requestPromise;
     if (!invoiceRequest) {
-      await clickBillingTargets(page);
       invoiceRequest = await findInvoiceRequest(page, 8_000);
     }
     if (invoiceRequest) {
       break;
     }
+  }
+
+  if (stripePortalPage) {
+    await stripePortalPage
+      .waitForLoadState("networkidle", { timeout: 10_000 })
+      .catch(() => undefined);
+    const stripeInvoices = await scrapeStripeInvoices(stripePortalPage, range);
+    if (!stripeInvoices.length) {
+      await captureSnapshot(stripePortalPage, "cursor", "cursor-stripe-empty");
+    }
+    if (stripePortalPage !== page) {
+      await stripePortalPage.close().catch(() => undefined);
+    }
+    await page.close().catch(() => undefined);
+    return stripeInvoices;
   }
 
   if (!invoiceRequest) {
