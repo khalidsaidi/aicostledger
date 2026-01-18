@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+apps/web/dist/
+
+# env files
+.env
+.env.*
+
+# logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+firebase-debug.log*
+
+# OS
+.DS_Store
+
+# agent artifacts
+.ai/
+
+# playwright profiles/sessions
+.aicostledger/
+playwright-profiles/
+
+# firebase local cache
+.firebase/

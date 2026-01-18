@@ -1,0 +1,21 @@
+{
+  "name": "aicostledger",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.12.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "pnpm -C apps/web dev",
+    "dev:functions": "pnpm -C apps/functions dev",
+    "dev:collector": "pnpm -C packages/collector dev",
+    "build:web": "pnpm -C apps/web build",
+    "build:functions": "pnpm -C apps/functions build",
+    "build:collector": "pnpm -C packages/collector build",
+    "build": "pnpm build:functions && pnpm build:web && pnpm build:collector",
+    "lint": "echo 'no lint configured yet'",
+    "format": "prettier -w ."
+  }
+}
