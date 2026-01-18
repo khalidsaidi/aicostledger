@@ -430,4 +430,4 @@ app.use((error: Error, _req: express.Request, res: express.Response, _next: expr
   res.status(500).json({ error: "Server error", message: error.message });
 });
 
-export const api = onRequest({ region: "us-central1" }, app);
+export const api = onRequest({ region: "us-west1" }, app);

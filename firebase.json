@@ -19,7 +19,7 @@
       {
         "source": "/api/**",
         "function": "api",
-        "region": "us-central1"
+        "region": "us-west1"
       },
       {
         "source": "**",

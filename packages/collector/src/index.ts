@@ -25,7 +25,7 @@ program
   .command("init")
   .description("Create local collector config")
   .action(async () => {
-    const defaultBackend = "https://aicostledger-prod-ed7966.web.app";
+    const defaultBackend = "https://aicostledger-prod-usw1-a87bf2.web.app";
     const backendUrlInput = await askQuestion(`Backend URL [${defaultBackend}]: `);
     const backendUrl = backendUrlInput.trim() || defaultBackend;
     const token = (await askQuestion("Ingestion token: ")).trim();
