@@ -18,6 +18,8 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install
+      - name: Build shared
+        run: pnpm -C packages/shared build
       - name: Build functions
         run: pnpm -C apps/functions build
       - name: Build web

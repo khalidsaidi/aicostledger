@@ -14,7 +14,7 @@ import {
   providerIds,
   runLogSchema,
   type LedgerItem
-} from "@aicostledger/shared";
+} from "./shared.js";
 
 initializeApp();
 

@@ -6,6 +6,7 @@ dist/
 apps/web/dist/
 apps/functions/lib/
 packages/collector/dist/
+packages/shared/dist/
 
 # env files
 .env

@@ -12,7 +12,6 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
-    "@aicostledger/shared": "workspace:*",
     "express": "^4.19.2",
     "firebase-admin": "^12.7.0",
     "firebase-functions": "^4.9.0",
