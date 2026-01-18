@@ -136,7 +136,8 @@ function findEarliestDate(rows: { spans: string[] }[]) {
 async function loadPortalRows(page: Page, range: DateRange | null) {
   const rowSelector = '[data-testid="billing-portal-invoice-row"]';
   const viewMoreSelector =
-    '[data-testid="view-more-button"], button:has-text("View more"), button:has-text("Load more"), button:has-text("Show more")';
+    '[data-testid="view-more-button"], [data-testid="view-more-button-loading"], button:has-text("View more"), button:has-text("Load more"), button:has-text("Show more")';
+  const viewMoreLoadingSelector = '[data-testid="view-more-button-loading"]';
 
   const readRows = async () => {
     const rows: Array<{ spans: string[]; description: string; link?: string }> = [];
@@ -174,13 +175,30 @@ async function loadPortalRows(page: Page, range: DateRange | null) {
     const viewMore = page.locator(viewMoreSelector).first();
     const viewMoreCount = await page.locator(viewMoreSelector).count().catch(() => 0);
     debug("view more count", viewMoreCount);
-    if (!(await viewMore.isVisible({ timeout: 2_000 }).catch(() => false))) {
-      break;
+
+    let interacted = false;
+    const loading = page.locator(viewMoreLoadingSelector).first();
+    if (await loading.isVisible({ timeout: 500 }).catch(() => false)) {
+      await loading.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => undefined);
     }
-    await viewMore
-      .click({ timeout: 5_000, noWaitAfter: true, force: true })
-      .catch(() => undefined);
-    await page.waitForTimeout(4000);
+
+    if (await viewMore.isVisible({ timeout: 2_000 }).catch(() => false)) {
+      await viewMore.scrollIntoViewIfNeeded().catch(() => undefined);
+      const disabled = await viewMore.isDisabled().catch(() => false);
+      if (!disabled) {
+        await viewMore
+          .click({ timeout: 5_000, noWaitAfter: true, force: true })
+          .catch(() => undefined);
+        interacted = true;
+      }
+    }
+
+    if (!interacted) {
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => undefined);
+      await page.mouse.wheel(0, 2000).catch(() => undefined);
+    }
+
+    await page.waitForTimeout(3000);
 
     const nextRows = await readRows();
     debug("portal rows", nextRows.length, "attempt", attempt + 2);
