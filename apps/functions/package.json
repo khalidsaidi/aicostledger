@@ -1,0 +1,26 @@
+{
+  "name": "@aicostledger/functions",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "echo 'no lint configured'"
+  },
+  "dependencies": {
+    "@aicostledger/shared": "workspace:*",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^4.9.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.30",
+    "typescript": "^5.5.4"
+  }
+}
