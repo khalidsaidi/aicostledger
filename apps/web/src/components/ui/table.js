@@ -1,0 +1,16 @@
+import { jsx as _jsx } from "react/jsx-runtime";
+import * as React from "react";
+import { cn } from "../../lib/utils";
+const Table = React.forwardRef(({ className, ...props }, ref) => (_jsx("div", { className: "w-full overflow-auto", children: _jsx("table", { ref: ref, className: cn("w-full text-sm", className), ...props }) })));
+Table.displayName = "Table";
+const TableHeader = React.forwardRef(({ className, ...props }, ref) => (_jsx("thead", { ref: ref, className: cn("border-b border-border text-left", className), ...props })));
+TableHeader.displayName = "TableHeader";
+const TableBody = React.forwardRef(({ className, ...props }, ref) => (_jsx("tbody", { ref: ref, className: cn("divide-y divide-border", className), ...props })));
+TableBody.displayName = "TableBody";
+const TableRow = React.forwardRef(({ className, ...props }, ref) => (_jsx("tr", { ref: ref, className: cn("hover:bg-muted/60", className), ...props })));
+TableRow.displayName = "TableRow";
+const TableHead = React.forwardRef(({ className, ...props }, ref) => (_jsx("th", { ref: ref, className: cn("px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground", className), ...props })));
+TableHead.displayName = "TableHead";
+const TableCell = React.forwardRef(({ className, ...props }, ref) => (_jsx("td", { ref: ref, className: cn("px-4 py-3 align-top", className), ...props })));
+TableCell.displayName = "TableCell";
+export { Table, TableHeader, TableBody, TableRow, TableHead, TableCell };
