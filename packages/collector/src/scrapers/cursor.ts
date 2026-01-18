@@ -5,6 +5,13 @@ import { captureSnapshot } from "../utils/snapshot.js";
 import { isStripePortal } from "./portal.js";
 import { scrapeStripeInvoices } from "./stripe.js";
 
+const debugEnabled = process.env.AICOSTLEDGER_DEBUG === "1";
+const debug = (...args: Array<string | number>) => {
+  if (debugEnabled) {
+    console.log("[cursor]", ...args);
+  }
+};
+
 type CursorInvoice = {
   invoiceId: string;
   date: string;
@@ -64,10 +71,24 @@ function isStripePortalUrl(url: string) {
   if (!lower.includes("stripe.com")) {
     return false;
   }
+  if (lower.includes("/expired")) {
+    return false;
+  }
   if (lower.includes("invoice.stripe.com") || lower.includes("js.stripe.com")) {
     return false;
   }
   return STRIPE_PORTAL_HINTS.some((hint) => lower.includes(hint));
+}
+
+function redactUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const shortPath = parts.length ? `/${parts[0]}/…` : "/";
+    return `${url.origin}${shortPath}`;
+  } catch (err) {
+    return "unknown";
+  }
 }
 
 function pickStripePortalLink(links: string[]) {
@@ -86,6 +107,28 @@ function pickStripePortalLink(links: string[]) {
     });
 
   return candidates[0] ?? null;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => {
+      setTimeout(() => resolve(null), timeoutMs);
+    })
+  ]);
+}
+
+async function gotoWithTimeout(page: Page, url: string, timeoutMs: number) {
+  return Promise.race([
+    page.goto(url, { waitUntil: "domcontentloaded" }).catch((err) => {
+      debug("goto failed", err?.message || "unknown");
+      return undefined;
+    }),
+    page.waitForTimeout(timeoutMs).then(() => {
+      debug("goto timeout", timeoutMs);
+      return undefined;
+    })
+  ]);
 }
 
 async function fetchInvoicePages(page: Page, payload: CursorInvoiceRequest["payload"]) {
@@ -122,11 +165,17 @@ async function fetchInvoicePages(page: Page, payload: CursorInvoiceRequest["payl
 }
 
 async function findStripePortalLink(page: Page) {
-  const links = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll("a[href]")).map(
-      (anchor) => (anchor as HTMLAnchorElement).href
-    );
-  });
+  const links = await withTimeout(
+    page.evaluate(() => {
+      return Array.from(document.querySelectorAll("a[href]")).map(
+        (anchor) => (anchor as HTMLAnchorElement).href
+      );
+    }),
+    5_000
+  );
+  if (!links) {
+    return null;
+  }
   return pickStripePortalLink(links);
 }
 
@@ -139,22 +188,65 @@ async function findStripePortalPage(context: BrowserContext) {
   return null;
 }
 
-async function resolveStripePortal(context: BrowserContext, page: Page) {
+async function waitForStripePortalPage(context: BrowserContext, timeoutMs: number) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const portalPage = await findStripePortalPage(context);
+    if (portalPage) {
+      return portalPage;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return null;
+}
+
+async function openStripePortalFromCursor(page: Page, context: BrowserContext) {
+  const button = page.locator("button", { hasText: /manage subscription/i }).first();
+  if (!(await button.isVisible({ timeout: 2_000 }).catch(() => false))) {
+    debug("manage subscription button not visible");
+    return null;
+  }
+
+  debug("click manage subscription");
+  const popupPromise = page.waitForEvent("popup", { timeout: 8_000 }).catch(() => null);
+  await button.click({ timeout: 5_000, noWaitAfter: true, force: true }).catch(() => undefined);
+
+  const popup = await popupPromise;
+  if (popup && isStripePortalUrl(popup.url())) {
+    debug("stripe portal popup detected");
+    return popup;
+  }
+
+  return waitForStripePortalPage(context, 8_000);
+}
+
+async function resolveStripePortal(
+  context: BrowserContext,
+  page: Page,
+  options: { allowExistingTab?: boolean } = {}
+) {
+  const allowExistingTab = options.allowExistingTab ?? true;
   if (isStripePortalUrl(page.url())) {
     return page;
   }
 
-  const link = await findStripePortalLink(page);
-  if (link) {
-    await page.goto(link, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
-    if (isStripePortalUrl(page.url())) {
-      return page;
+  if (allowExistingTab) {
+    const portalPage = await findStripePortalPage(context);
+    if (portalPage && isStripePortalUrl(portalPage.url())) {
+      debug("stripe portal tab detected");
+      return portalPage;
     }
   }
 
-  const portalPage = await findStripePortalPage(context);
-  if (portalPage && isStripePortalUrl(portalPage.url())) {
-    return portalPage;
+  debug("resolve portal from", redactUrl(page.url()));
+  const link = await findStripePortalLink(page);
+  if (link) {
+    debug("stripe link found", redactUrl(link));
+    await page.goto(link, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
+    if (isStripePortalUrl(page.url())) {
+      debug("stripe portal navigated");
+      return page;
+    }
   }
 
   const currentUrl = page.url().toLowerCase();
@@ -164,6 +256,7 @@ async function resolveStripePortal(context: BrowserContext, page: Page) {
     !currentUrl.includes("js.stripe.com") &&
     (await isStripePortal(page))
   ) {
+    debug("stripe portal identified by title");
     return page;
   }
 
@@ -175,11 +268,14 @@ async function clickBillingTargets(page: Page) {
   const count = Math.min(await candidates.count(), 10);
   for (let index = 0; index < count; index += 1) {
     const target = candidates.nth(index);
-    const text = (await target.innerText().catch(() => "")) || "";
+    const text = (await target.innerText({ timeout: 2_000 }).catch(() => "")) || "";
     if (!text || SKIP_PATTERNS.test(text)) {
       continue;
     }
-    await target.click().catch(() => undefined);
+    debug("click candidate", text);
+    await target
+      .click({ timeout: 5_000, noWaitAfter: true, force: true })
+      .catch(() => undefined);
     await page.waitForTimeout(1500);
   }
 }
@@ -211,15 +307,42 @@ async function findInvoiceRequest(page: Page, timeoutMs: number) {
 }
 
 export async function collectCursorInvoices(context: BrowserContext, range: DateRange | null) {
-  const page = await context.newPage();
+  const existingPage =
+    context.pages().find((candidate) => candidate.url().includes("cursor.com/billing")) ??
+    context.pages().find((candidate) => candidate.url().includes("cursor.com/dashboard")) ??
+    context.pages().find((candidate) => candidate.url().includes("cursor.com")) ??
+    null;
+  const page = existingPage ?? (await context.newPage());
+  const shouldClosePage = !existingPage;
   page.setDefaultTimeout(20_000);
   page.setDefaultNavigationTimeout(20_000);
   let invoiceRequest: CursorInvoiceRequest | null = null;
   let stripePortalPage: Page | null = null;
 
+  if (existingPage) {
+    debug("reusing existing tab", redactUrl(existingPage.url()));
+    stripePortalPage = await resolveStripePortal(context, page, { allowExistingTab: true });
+    if (!stripePortalPage) {
+      stripePortalPage = await openStripePortalFromCursor(page, context);
+    }
+    if (!stripePortalPage) {
+      await clickBillingTargets(page);
+      debug("clicked billing targets");
+      stripePortalPage = await resolveStripePortal(context, page, { allowExistingTab: true });
+    }
+    if (!stripePortalPage) {
+      invoiceRequest = await findInvoiceRequest(page, 8_000);
+      if (invoiceRequest) {
+        debug("cursor billing api detected");
+      }
+    }
+  }
+
+  if (!stripePortalPage && !invoiceRequest) {
   for (const url of CURSOR_PORTAL_URLS) {
+    debug("navigate", url);
     const requestPromise = findInvoiceRequest(page, 12_000);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => undefined);
+    await gotoWithTimeout(page, url, 15_000);
     await page.waitForTimeout(1500);
     stripePortalPage = await resolveStripePortal(context, page);
     if (!stripePortalPage) {
@@ -227,6 +350,7 @@ export async function collectCursorInvoices(context: BrowserContext, range: Date
       stripePortalPage = await resolveStripePortal(context, page);
     }
     if (stripePortalPage) {
+      debug("stripe portal detected");
       break;
     }
     invoiceRequest = await requestPromise;
@@ -234,8 +358,10 @@ export async function collectCursorInvoices(context: BrowserContext, range: Date
       invoiceRequest = await findInvoiceRequest(page, 8_000);
     }
     if (invoiceRequest) {
+      debug("cursor billing api detected");
       break;
     }
+  }
   }
 
   if (stripePortalPage) {
@@ -243,24 +369,29 @@ export async function collectCursorInvoices(context: BrowserContext, range: Date
       .waitForLoadState("networkidle", { timeout: 10_000 })
       .catch(() => undefined);
     const stripeInvoices = await scrapeStripeInvoices(stripePortalPage, range);
+    debug("stripe invoices", stripeInvoices.length);
     if (!stripeInvoices.length) {
       await captureSnapshot(stripePortalPage, "cursor", "cursor-stripe-empty");
     }
     if (stripePortalPage !== page) {
       await stripePortalPage.close().catch(() => undefined);
     }
-    await page.close().catch(() => undefined);
+    if (shouldClosePage) {
+      await page.close().catch(() => undefined);
+    }
     return stripeInvoices;
   }
 
   if (!invoiceRequest) {
     await captureSnapshot(page, "cursor", "cursor-no-invoices");
-    await page.close().catch(() => undefined);
+    if (shouldClosePage) {
+      await page.close().catch(() => undefined);
+    }
     throw new Error("Cursor billing portal request not found.");
   }
 
   if (!page.url().includes("/dashboard")) {
-    await page.goto("https://cursor.com/dashboard?tab=billing", { waitUntil: "domcontentloaded" });
+    await gotoWithTimeout(page, "https://cursor.com/dashboard?tab=billing", 10_000);
     await page.waitForTimeout(2000);
   }
 
@@ -273,6 +404,8 @@ export async function collectCursorInvoices(context: BrowserContext, range: Date
     await captureSnapshot(page, "cursor", "cursor-empty-ledger");
   }
 
-  await page.close().catch(() => undefined);
+  if (shouldClosePage) {
+    await page.close().catch(() => undefined);
+  }
   return records;
 }

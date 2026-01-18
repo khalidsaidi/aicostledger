@@ -9,6 +9,8 @@ export async function captureSnapshot(page: Page, providerId: string, label: str
   await ensureDir(dir);
   const html = await page.content();
   await fs.writeFile(path.join(dir, `${label}.html`), html, "utf-8");
-  await page.screenshot({ path: path.join(dir, `${label}.png`), fullPage: true });
+  await page
+    .screenshot({ path: path.join(dir, `${label}.png`), fullPage: true, timeout: 15_000 })
+    .catch(() => undefined);
   return dir;
 }
