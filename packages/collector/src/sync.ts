@@ -5,6 +5,7 @@ import { stableId } from "@aicostledger/shared";
 import { getProvider } from "./providers.js";
 import { scrapeStripeInvoices } from "./scrapers/stripe.js";
 import { scrapeTableInvoices } from "./scrapers/generic.js";
+import { collectChatGptInvoices } from "./scrapers/chatgpt.js";
 import { isStripePortal } from "./scrapers/portal.js";
 import type { InvoiceRecord } from "./types.js";
 import { buildMonthRange, type DateRange } from "./utils/dates.js";
@@ -45,7 +46,7 @@ async function getContext(providerId: ProviderId) {
     return {
       context,
       close: async () => {
-        // No-op: avoid closing the user's Chrome session.
+        await browser.close().catch(() => undefined);
       }
     };
   }
@@ -74,6 +75,10 @@ async function getContext(providerId: ProviderId) {
 }
 
 async function collectInvoices(context: Awaited<ReturnType<typeof getContext>>["context"], providerId: ProviderId, range: DateRange | null) {
+  if (providerId === "openai_chatgpt") {
+    return collectChatGptInvoices(context, range);
+  }
+
   const provider = getProvider(providerId);
   const page = await context.newPage();
   page.setDefaultTimeout(60_000);
