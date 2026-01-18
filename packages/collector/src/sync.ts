@@ -6,6 +6,7 @@ import { getProvider } from "./providers.js";
 import { scrapeStripeInvoices } from "./scrapers/stripe.js";
 import { scrapeTableInvoices } from "./scrapers/generic.js";
 import { collectChatGptInvoices } from "./scrapers/chatgpt.js";
+import { collectCursorInvoices } from "./scrapers/cursor.js";
 import { isStripePortal } from "./scrapers/portal.js";
 import type { InvoiceRecord } from "./types.js";
 import { buildMonthRange, type DateRange } from "./utils/dates.js";
@@ -77,6 +78,9 @@ async function getContext(providerId: ProviderId) {
 async function collectInvoices(context: Awaited<ReturnType<typeof getContext>>["context"], providerId: ProviderId, range: DateRange | null) {
   if (providerId === "openai_chatgpt") {
     return collectChatGptInvoices(context, range);
+  }
+  if (providerId === "cursor") {
+    return collectCursorInvoices(context, range);
   }
 
   const provider = getProvider(providerId);
