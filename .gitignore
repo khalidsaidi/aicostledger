@@ -4,6 +4,8 @@ node_modules/
 # build output
 dist/
 apps/web/dist/
+apps/functions/lib/
+packages/collector/dist/
 
 # env files
 .env
@@ -28,3 +30,6 @@ playwright-profiles/
 
 # firebase local cache
 .firebase/
+
+# legacy services (unused)
+services/
