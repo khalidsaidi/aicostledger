@@ -874,6 +874,19 @@ async function runSync(uid: string, providerId: ProviderId, from?: string, to?: 
     throw error;
   }
   console.log(`[collector] collected ${invoices.length} invoices for ${providerId}`);
+
+  try {
+    if (profileDir) {
+      await archiveProfileDir(uid, providerId, profileDir);
+    } else if (context) {
+      await saveStorageState(uid, providerId, context);
+    }
+  } catch (error) {
+    console.warn(
+      `[collector] session save failed for ${providerId}: ${(error as Error).message || error}`
+    );
+  }
+
   const items: LedgerItemInput[] = [];
   const pdfMap = new Map<string, string>();
   const scrapeDir = path.join(aiDir, "scrapes", providerId, runId);

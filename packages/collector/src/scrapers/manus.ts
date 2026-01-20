@@ -247,11 +247,7 @@ async function waitForUsageTable(page: Page) {
     }
   }
   await dialog.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
-  await dialog
-    .locator("a[href^='/app/']")
-    .first()
-    .waitFor({ state: "visible", timeout: 10_000 })
-    .catch(() => undefined);
+  await openUsageBilling(dialog);
   await dialog
     .locator("text=/credits change/i")
     .first()
@@ -259,12 +255,31 @@ async function waitForUsageTable(page: Page) {
     .catch(() => undefined);
 }
 
+async function openUsageBilling(dialog: Locator) {
+  const candidates: Locator[] = [
+    dialog.getByRole("button", { name: /website usage & billing/i }).first(),
+    dialog.getByRole("link", { name: /website usage & billing/i }).first(),
+    dialog.locator("text=/website usage & billing/i").first(),
+    dialog.locator("text=/usage & billing/i").first()
+  ];
+  for (const candidate of candidates) {
+    if (await candidate.isVisible().catch(() => false)) {
+      await candidate.click({ force: true }).catch(() => undefined);
+      await dialog.page().waitForTimeout(600);
+      await dialog.page().waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
+      return true;
+    }
+  }
+  return false;
+}
+
 async function collectUsageRows(page: Page) {
+  const dialog = page.locator("[role='dialog']").first();
+  const root = (await dialog.count().catch(() => 0)) ? dialog : page.locator("body");
   const maxAttempts = 3;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
-      const dialog = page.locator("[role='dialog']").first();
-      const listItems = dialog.locator("a[href^='/app/']");
+      const listItems = root.locator("a[href^='/app/']");
       const listCount = await listItems.count();
       if (listCount) {
         const rows: Array<{ details: string; date: string; delta: string }> = [];
@@ -285,7 +300,7 @@ async function collectUsageRows(page: Page) {
         return rows;
       }
 
-      const tables = page.locator("table");
+      const tables = root.locator("table");
       const tableCount = await tables.count();
       for (let index = 0; index < tableCount; index += 1) {
         const table = tables.nth(index);
@@ -311,7 +326,7 @@ async function collectUsageRows(page: Page) {
         return rows;
       }
 
-      const antRows = page.locator(".ant-table-row");
+      const antRows = root.locator(".ant-table-row");
       const antCount = await antRows.count();
       const rows: Array<{ details: string; date: string; delta: string }> = [];
       for (let rowIndex = 0; rowIndex < antCount; rowIndex += 1) {
@@ -324,7 +339,89 @@ async function collectUsageRows(page: Page) {
           });
         }
       }
-      return rows;
+      if (rows.length) {
+        return rows;
+      }
+
+      const fallbackRows = await root.evaluate((rootEl) => {
+        const dateRegex = /\d{4}-\d{2}-\d{2}/;
+        const results: Array<{ details: string; date: string; delta: string }> = [];
+        const seen = new Set<string>();
+
+        const extractFromRow = (row: Element) => {
+          const cells = Array.from(
+            row.querySelectorAll("[role='cell'], [role='gridcell'], td")
+          );
+          if (cells.length >= 3) {
+            const text = cells.map((cell) => (cell.textContent || "").trim());
+            return {
+              details: text[0] || "",
+              date: text[1] || "",
+              delta: text[2] || ""
+            };
+          }
+          return null;
+        };
+
+        const addRow = (row: { details: string; date: string; delta: string }) => {
+          if (!row.date || !dateRegex.test(row.date)) {
+            return;
+          }
+          const signature = `${row.details}|${row.date}|${row.delta}`;
+          if (!signature || seen.has(signature)) {
+            return;
+          }
+          seen.add(signature);
+          results.push(row);
+        };
+
+        const roleRows = Array.from(rootEl.querySelectorAll("[role='row']"));
+        roleRows.forEach((row) => {
+          const parsed = extractFromRow(row);
+          if (parsed) {
+            addRow(parsed);
+          }
+        });
+        if (results.length) {
+          return results;
+        }
+
+        const trRows = Array.from(rootEl.querySelectorAll("tr"));
+        trRows.forEach((row) => {
+          const parsed = extractFromRow(row);
+          if (parsed) {
+            addRow(parsed);
+          }
+        });
+        if (results.length) {
+          return results;
+        }
+
+        const dateNodes = Array.from(rootEl.querySelectorAll("*")).filter((el) =>
+          dateRegex.test(el.textContent || "")
+        );
+        for (const node of dateNodes) {
+          const row = node.closest("[role='row'], tr, div");
+          if (!row) {
+            continue;
+          }
+          const text = (row.textContent || "").split("\n").map((part) => part.trim()).filter(Boolean);
+          const date = text.find((part) => dateRegex.test(part)) || "";
+          if (!date) {
+            continue;
+          }
+          const delta =
+            text.find((part) => /[+-]?\d[\d,]*\.?\d*/.test(part) && !dateRegex.test(part)) ||
+            text[text.length - 1] ||
+            "";
+          const details = text.find((part) => part !== date && part !== delta) || text[0] || "";
+          addRow({ details, date, delta });
+        }
+
+        return results;
+      });
+
+      return fallbackRows;
     } catch (error) {
       const message = (error as Error).message || "";
       if (message.includes("Execution context was destroyed") || message.includes("Target closed")) {
@@ -342,6 +439,8 @@ async function paginateUsageTable(page: Page, range: DateRange | null) {
   const collected: InvoiceRecord[] = [];
   const seenPages = new Set<string>();
   let direction: "next" | "prev" | null = null;
+  const dialog = page.locator("[role='dialog']").first();
+  const root = (await dialog.count().catch(() => 0)) ? dialog : page.locator("body");
 
   const getPageSignature = (rows: Array<{ details: string; date: string; delta: string }>) =>
     rows.map((row) => `${row.date}|${row.details}|${row.delta}`).join("||");
@@ -381,8 +480,8 @@ async function paginateUsageTable(page: Page, range: DateRange | null) {
 
   const getButton = (dir: "next" | "prev") => {
     const label = dir === "next" ? /next/i : /previous|prev/i;
-    return page
-      .locator(`.ant-pagination-${dir}, .ant-pagination-item-link`)
+    return root
+      .locator(`.ant-pagination-${dir}, .ant-pagination-item-link, button, a`)
       .filter({ hasText: label })
       .first();
   };
@@ -465,11 +564,9 @@ async function paginateUsageTable(page: Page, range: DateRange | null) {
 async function tryUsageHistory(page: Page, range: DateRange | null) {
   const usageLink = page.locator("text=/usage/i").first();
   if (!(await usageLink.isVisible().catch(() => false))) {
-    await page.evaluate(() => {
-      if (!location.hash.includes("settings/usage")) {
-        location.hash = "settings/usage";
-      }
-    }).catch(() => undefined);
+    await page
+      .goto("https://manus.im/app#settings/usage", { waitUntil: "domcontentloaded" })
+      .catch(() => undefined);
     await page.waitForTimeout(600);
   } else {
     await usageLink.click({ force: true }).catch(() => undefined);
