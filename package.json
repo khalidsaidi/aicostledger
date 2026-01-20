@@ -15,7 +15,8 @@
     "build:functions": "pnpm -C apps/functions build",
     "build:shared": "pnpm -C packages/shared build",
     "build:collector": "pnpm -C packages/collector build",
-    "build": "pnpm build:shared && pnpm build:functions && pnpm build:web && pnpm build:collector",
+    "build:collector-service": "pnpm -C apps/collector build",
+    "build": "pnpm build:shared && pnpm build:functions && pnpm build:collector && pnpm build:collector-service && pnpm build:web",
     "lint": "echo 'no lint configured yet'",
     "format": "prettier -w ."
   }

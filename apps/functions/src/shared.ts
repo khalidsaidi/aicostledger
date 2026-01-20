@@ -5,7 +5,8 @@ export const providerIds = [
   "openai_api",
   "anthropic_claude",
   "anthropic_api",
-  "cursor"
+  "cursor",
+  "manus"
 ] as const;
 
 export type ProviderId = (typeof providerIds)[number];
@@ -81,7 +82,8 @@ const providerMeta: Record<ProviderId, { vendor: string; productType: "subscript
   openai_api: { vendor: "OpenAI", productType: "api" },
   anthropic_claude: { vendor: "Anthropic", productType: "subscription" },
   anthropic_api: { vendor: "Anthropic", productType: "api" },
-  cursor: { vendor: "Cursor", productType: "subscription" }
+  cursor: { vendor: "Cursor", productType: "subscription" },
+  manus: { vendor: "Manus", productType: "subscription" }
 };
 
 function centsToAmount(amountCents: number, currency: string) {

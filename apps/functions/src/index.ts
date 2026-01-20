@@ -16,7 +16,25 @@ import {
   type LedgerItem
 } from "./shared.js";
 
-initializeApp();
+const firebaseProjectId =
+  process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || process.env.PROJECT_ID;
+let configBucket: string | undefined;
+if (process.env.FIREBASE_CONFIG) {
+  try {
+    const parsed = JSON.parse(process.env.FIREBASE_CONFIG) as { storageBucket?: string };
+    if (typeof parsed.storageBucket === "string") {
+      configBucket = parsed.storageBucket;
+    }
+  } catch {
+    // Ignore malformed FIREBASE_CONFIG.
+  }
+}
+const storageBucket =
+  process.env.FIREBASE_STORAGE_BUCKET ||
+  configBucket ||
+  (firebaseProjectId ? `${firebaseProjectId}.firebasestorage.app` : undefined);
+
+initializeApp(storageBucket ? { storageBucket } : undefined);
 
 const db = getFirestore();
 const storage = getStorage();

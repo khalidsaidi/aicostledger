@@ -37,6 +37,10 @@ export function findRepoRoot(startDir = process.cwd()) {
 }
 
 export function getAiDir() {
+  const override = process.env.AICOSTLEDGER_AI_DIR;
+  if (override && override.trim()) {
+    return override;
+  }
   return path.join(findRepoRoot(), ".ai");
 }
 

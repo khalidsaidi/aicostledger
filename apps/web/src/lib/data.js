@@ -30,7 +30,8 @@ export async function fetchConnectors(uid) {
         const data = doc.data();
         return {
             ...data,
-            lastRunAt: normalizeDate(data.lastRunAt)
+            lastRunAt: normalizeDate(data.lastRunAt),
+            sessionUpdatedAt: normalizeDate(data.sessionUpdatedAt)
         };
     });
 }

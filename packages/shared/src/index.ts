@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { sha256 } from "@noble/hashes/sha256";
+import { bytesToHex } from "@noble/hashes/utils";
 import { z } from "zod";
 
 export const providerIds = [
@@ -6,7 +7,8 @@ export const providerIds = [
   "openai_api",
   "anthropic_claude",
   "anthropic_api",
-  "cursor"
+  "cursor",
+  "manus"
 ] as const;
 
 export type ProviderId = (typeof providerIds)[number];
@@ -98,7 +100,8 @@ const providerMeta: Record<
   openai_api: { vendor: "OpenAI", productType: "api" },
   anthropic_claude: { vendor: "Anthropic", productType: "subscription" },
   anthropic_api: { vendor: "Anthropic", productType: "api" },
-  cursor: { vendor: "Cursor", productType: "subscription" }
+  cursor: { vendor: "Cursor", productType: "subscription" },
+  manus: { vendor: "Manus", productType: "subscription" }
 };
 
 export function stableId(
@@ -109,7 +112,7 @@ export function stableId(
   invoiceNumber?: string | null
 ) {
   const base = [providerId, occurredAt, amountCents, currency, invoiceNumber ?? ""].join("|");
-  return createHash("sha256").update(base).digest("hex");
+  return bytesToHex(sha256(new TextEncoder().encode(base)));
 }
 
 export function moneyToCents(amountStr: string, currency: string) {

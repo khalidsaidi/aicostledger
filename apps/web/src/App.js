@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { useAuth } from "./lib/auth";
 import { Dashboard } from "./pages/Dashboard";
+import { ConnectorLogin } from "./pages/ConnectorLogin";
 import { Connectors } from "./pages/Connectors";
 import { Ledger } from "./pages/Ledger";
 import { Login } from "./pages/Login";
@@ -22,5 +23,5 @@ export default function App() {
     if (loading) {
         return _jsx(LoadingScreen, {});
     }
-    return (_jsxs(Routes, { children: [_jsx(Route, { path: "/login", element: user ? _jsx(Navigate, { to: "/dashboard", replace: true }) : _jsx(Login, {}) }), _jsx(Route, { path: "/*", element: _jsx(ProtectedLayout, {}) })] }));
+    return (_jsxs(Routes, { children: [_jsx(Route, { path: "/login", element: user ? _jsx(Navigate, { to: "/dashboard", replace: true }) : _jsx(Login, {}) }), _jsx(Route, { path: "/connectors/login", element: user ? _jsx(ConnectorLogin, {}) : _jsx(Navigate, { to: "/login", replace: true }) }), _jsx(Route, { path: "/*", element: _jsx(ProtectedLayout, {}) })] }));
 }

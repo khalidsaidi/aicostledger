@@ -17,6 +17,7 @@
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {
+    "@noble/hashes": "^1.5.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

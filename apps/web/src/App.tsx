@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { useAuth } from "./lib/auth";
 import { Dashboard } from "./pages/Dashboard";
+import { ConnectorLogin } from "./pages/ConnectorLogin";
 import { Connectors } from "./pages/Connectors";
 import { Ledger } from "./pages/Ledger";
 import { Login } from "./pages/Login";
@@ -43,6 +44,10 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
+      <Route
+        path="/connectors/login"
+        element={user ? <ConnectorLogin /> : <Navigate to="/login" replace />}
+      />
       <Route path="/*" element={<ProtectedLayout />} />
     </Routes>
   );

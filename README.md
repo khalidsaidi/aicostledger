@@ -12,11 +12,12 @@ A web app plus local collector that scrapes AI billing portals and produces a un
 - Web: React (Vite) + TypeScript + Tailwind + shadcn/ui
 - Backend: Firebase Functions v2 (Express)
 - Data: Firestore + Storage
-- Collector: Node CLI + Playwright (persistent profiles)
+- Collector: Node CLI + Playwright (persistent profiles) + Cloud Run collector service
 
 ## Monorepo layout
 - `apps/web` - React frontend
 - `apps/functions` - Firebase Functions API
+- `apps/collector` - Cloud Run collector service (Playwright)
 - `packages/shared` - shared types + zod schemas
 - `packages/collector` - local Playwright collector CLI
 - `services/api` - legacy Cloud Run API (not used)
@@ -45,6 +46,24 @@ pnpm -C apps/web build
 firebase deploy --only hosting,functions,firestore:rules,storage
 ```
 
+### Deploy collector service (Cloud Run)
+```bash
+pnpm -C packages/shared build
+pnpm -C packages/collector build
+pnpm -C apps/collector build
+gcloud run deploy aicostledger-collector \\
+  --source apps/collector \\
+  --region us-west1 \\
+  --set-env-vars \"AICOSTLEDGER_AI_DIR=/tmp/aicostledger,ALLOWED_EMAILS=you@example.com\" \\
+  --allow-unauthenticated
+```
+After deploy, Firebase Hosting routes `/collector/**` to the service (see `firebase.json`).
+
+## Cloud collector workflow
+1) Open the Connectors page and click **Connect** on a provider.
+2) Open the login window, complete Google SSO, then click **Save session**.
+3) Click **Sync now** to pull invoices for the selected range.
+
 ## Collector workflow
 1) Generate an ingestion token in the web app (Connectors page).
 2) Build and run the collector:
@@ -66,6 +85,7 @@ node packages/collector/dist/index.js sync:all --from 2024-01 --to 2024-02
 - `anthropic_claude`
 - `anthropic_api`
 - `cursor`
+- `manus`
 
 ## Troubleshooting
 - Session expired: run `aicostledger connect <providerId>` again.

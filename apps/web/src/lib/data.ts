@@ -7,6 +7,8 @@ type ConnectorDoc = {
   lastRunAt?: string;
   lastStatus?: string;
   lastRunId?: string;
+  sessionUpdatedAt?: string;
+  lastError?: string;
 };
 
 function normalizeDate(value: unknown) {
@@ -41,7 +43,8 @@ export async function fetchConnectors(uid: string): Promise<ConnectorDoc[]> {
     const data = doc.data() as ConnectorDoc;
     return {
       ...data,
-      lastRunAt: normalizeDate(data.lastRunAt)
+      lastRunAt: normalizeDate(data.lastRunAt),
+      sessionUpdatedAt: normalizeDate(data.sessionUpdatedAt)
     };
   });
 }

@@ -3,42 +3,12 @@ import { chromium } from "playwright";
 import type { LedgerItemInput, ProviderId } from "@aicostledger/shared";
 import { stableId } from "@aicostledger/shared";
 import { getProvider } from "./providers.js";
-import { scrapeStripeInvoices } from "./scrapers/stripe.js";
-import { scrapeTableInvoices } from "./scrapers/generic.js";
-import { collectChatGptInvoices } from "./scrapers/chatgpt.js";
-import { collectCursorInvoices } from "./scrapers/cursor.js";
-import { isStripePortal } from "./scrapers/portal.js";
-import type { InvoiceRecord } from "./types.js";
-import { buildMonthRange, type DateRange } from "./utils/dates.js";
+import { collectInvoices as collectInvoicesFromContext, buildMonthRange, type DateRange } from "./core.js";
 import { downloadPdf } from "./utils/download.js";
 import { ensureDir, getProfileDir, getScrapeDir } from "./utils/paths.js";
-import { captureSnapshot } from "./utils/snapshot.js";
 import { loadPdfPayload, sendIngest } from "./ingest.js";
 
 const CDP_URL = process.env.AICOSTLEDGER_CDP_URL;
-
-function pickStripePortalLink(links: string[]) {
-  const candidates = links
-    .map((link) => link.trim())
-    .filter(Boolean)
-    .filter((link) => {
-      const lower = link.toLowerCase();
-      if (!lower.includes("stripe.com")) {
-        return false;
-      }
-      if (lower.includes("invoice.stripe.com")) {
-        return false;
-      }
-      return (
-        lower.includes("billing.stripe.com") ||
-        lower.includes("stripe.com/billing") ||
-        lower.includes("customer-portal") ||
-        lower.includes("portal")
-      );
-    });
-
-  return candidates[0] ?? null;
-}
 
 async function getContext(providerId: ProviderId) {
   if (CDP_URL) {
@@ -75,59 +45,12 @@ async function getContext(providerId: ProviderId) {
   };
 }
 
-async function collectInvoices(context: Awaited<ReturnType<typeof getContext>>["context"], providerId: ProviderId, range: DateRange | null) {
-  if (providerId === "openai_chatgpt") {
-    return collectChatGptInvoices(context, range);
-  }
-  if (providerId === "cursor") {
-    return collectCursorInvoices(context, range);
-  }
-
-  const provider = getProvider(providerId);
-  const page = await context.newPage();
-  page.setDefaultTimeout(60_000);
-
-  let invoices: InvoiceRecord[] = [];
-  let lastUrl = provider.startUrl;
-
-  for (const url of provider.billingUrls) {
-    lastUrl = url;
-    await page.goto(url, { waitUntil: "domcontentloaded" });
-    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
-    await page.waitForTimeout(1000);
-
-    const stripeLinks = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll("a[href*='stripe.com']")).map(
-        (anchor) => (anchor as HTMLAnchorElement).href
-      );
-    });
-    const stripeHref = pickStripePortalLink(stripeLinks);
-
-    if (stripeHref) {
-      lastUrl = stripeHref;
-      await page.goto(stripeHref, { waitUntil: "domcontentloaded" });
-      await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
-    }
-
-    if (await isStripePortal(page)) {
-      invoices = await scrapeStripeInvoices(page, range);
-    } else {
-      invoices = await scrapeTableInvoices(page, range);
-    }
-
-    if (invoices.length) {
-      break;
-    }
-  }
-
-  if (!invoices.length) {
-    await captureSnapshot(page, providerId, "no-invoices");
-    await page.close().catch(() => undefined);
-    throw new Error(`No invoices found at ${lastUrl}`);
-  }
-
-  await page.close().catch(() => undefined);
-  return invoices;
+async function collectInvoices(
+  context: Awaited<ReturnType<typeof getContext>>["context"],
+  providerId: ProviderId,
+  range: DateRange | null
+) {
+  return collectInvoicesFromContext(context, providerId, range);
 }
 
 export async function syncProvider(params: {

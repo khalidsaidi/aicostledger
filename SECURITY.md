@@ -8,6 +8,7 @@
 ## Storage
 - Receipt PDFs are stored at `receipts/{uid}/{providerId}/{stableId}.pdf` in Firebase Storage.
 - Storage rules restrict reads to the authenticated owner; writes are performed server-side.
+- Cloud collector browser sessions (storage state JSON) are stored at `collector-sessions/{uid}/{providerId}/storageState.json`.
 
 ## Local collector profiles
 - Collector sessions are stored locally at `~/.aicostledger/profiles/<providerId>/`.

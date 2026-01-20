@@ -52,6 +52,28 @@ export const PROVIDERS: ProviderConfig[] = [
       "https://cursor.sh/settings/billing",
       "https://cursor.sh/billing"
     ]
+  },
+  {
+    id: "manus",
+    label: "Manus",
+    startUrl: "https://manus.im/app",
+    billingUrls: [
+      "https://manus.im/app",
+      "https://manus.im/app/billing",
+      "https://manus.im/app/invoices",
+      "https://manus.im/app/settings",
+      "https://manus.im/app/settings?tab=billing",
+      "https://manus.im/app/settings?section=billing",
+      "https://manus.im/app/account",
+      "https://manus.im/app/subscription",
+      "https://manus.im/app/plan",
+      "https://manus.im/billing",
+      "https://manus.im/settings/billing",
+      "https://manus.im/settings",
+      "https://manus.im/account",
+      "https://manus.im/subscription",
+      "https://manus.im/plan"
+    ]
   }
 ];
 
