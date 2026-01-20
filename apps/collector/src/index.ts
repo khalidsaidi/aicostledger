@@ -135,6 +135,7 @@ const storageBucket =
 initializeApp(storageBucket ? { storageBucket } : undefined);
 
 const db = getFirestore();
+db.settings({ ignoreUndefinedProperties: true });
 const storage = getStorage();
 
 const app = express();

@@ -236,16 +236,23 @@ function parseCreditsDelta(value: string) {
 }
 
 async function waitForUsageTable(page: Page) {
-  const usageHeader = page.locator("text=/usage/i").first();
-  if (await usageHeader.isVisible().catch(() => false)) {
-    await usageHeader.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
+  const dialog = page.locator("[role='dialog']").first();
+  if (await dialog.isVisible().catch(() => false)) {
+    const usageNav = dialog
+      .locator("button:has-text('Usage'), [role='button']:has-text('Usage')")
+      .first();
+    if (await usageNav.isVisible().catch(() => false)) {
+      await usageNav.click({ force: true }).catch(() => undefined);
+      await page.waitForTimeout(400);
+    }
   }
-  const billingCard = page.locator("text=/website usage & billing/i").first();
-  if (await billingCard.isVisible().catch(() => false)) {
-    await billingCard.click({ force: true }).catch(() => undefined);
-    await page.waitForTimeout(400);
-  }
-  await page
+  await dialog.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
+  await dialog
+    .locator("a[href^='/app/']")
+    .first()
+    .waitFor({ state: "visible", timeout: 10_000 })
+    .catch(() => undefined);
+  await dialog
     .locator("text=/credits change/i")
     .first()
     .waitFor({ state: "visible", timeout: 10_000 })
@@ -253,38 +260,82 @@ async function waitForUsageTable(page: Page) {
 }
 
 async function collectUsageRows(page: Page) {
-  return page.evaluate(() => {
-    const rows: Array<{ details: string; date: string; delta: string }> = [];
-    const tables = Array.from(document.querySelectorAll("table"));
-    const matchTable = tables.find((table) => {
-      const headers = Array.from(table.querySelectorAll("th"))
-        .map((th) => (th.textContent || "").toLowerCase());
-      return headers.some((text) => text.includes("credits")) && headers.some((text) => text.includes("date"));
-    });
-
-    const readRowCells = (cells: Element[]) =>
-      cells.map((cell) => (cell.textContent || "").trim());
-
-    if (matchTable) {
-      const rowsEl = Array.from(matchTable.querySelectorAll("tbody tr"));
-      rowsEl.forEach((row) => {
-        const cells = readRowCells(Array.from(row.querySelectorAll("td")));
-        if (cells.length >= 3) {
-          rows.push({ details: cells[0] || "", date: cells[1] || "", delta: cells[2] || "" });
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const dialog = page.locator("[role='dialog']").first();
+      const listItems = dialog.locator("a[href^='/app/']");
+      const listCount = await listItems.count();
+      if (listCount) {
+        const rows: Array<{ details: string; date: string; delta: string }> = [];
+        for (let index = 0; index < listCount; index += 1) {
+          const item = listItems.nth(index);
+          const firstLine = item.locator("p").first();
+          const spans = await firstLine.locator("span").allTextContents();
+          const secondLine = item.locator("p").nth(1);
+          const date = (await secondLine.innerText().catch(() => "")).trim();
+          if (spans.length >= 2) {
+            rows.push({
+              details: spans[0]?.trim() || "",
+              date,
+              delta: spans[1]?.trim() || ""
+            });
+          }
         }
-      });
-      return rows;
-    }
-
-    const antRows = Array.from(document.querySelectorAll(".ant-table-row"));
-    antRows.forEach((row) => {
-      const cells = readRowCells(Array.from(row.querySelectorAll(".ant-table-cell")));
-      if (cells.length >= 3) {
-        rows.push({ details: cells[0] || "", date: cells[1] || "", delta: cells[2] || "" });
+        return rows;
       }
-    });
-    return rows;
-  });
+
+      const tables = page.locator("table");
+      const tableCount = await tables.count();
+      for (let index = 0; index < tableCount; index += 1) {
+        const table = tables.nth(index);
+        const headers = (await table.locator("th").allTextContents()).map((text) =>
+          text.toLowerCase()
+        );
+        if (!headers.some((text) => text.includes("credits")) || !headers.some((text) => text.includes("date"))) {
+          continue;
+        }
+        const rows: Array<{ details: string; date: string; delta: string }> = [];
+        const rowLocator = table.locator("tbody tr");
+        const rowCount = await rowLocator.count();
+        for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+          const cells = await rowLocator.nth(rowIndex).locator("td").allTextContents();
+          if (cells.length >= 3) {
+            rows.push({
+              details: cells[0]?.trim() || "",
+              date: cells[1]?.trim() || "",
+              delta: cells[2]?.trim() || ""
+            });
+          }
+        }
+        return rows;
+      }
+
+      const antRows = page.locator(".ant-table-row");
+      const antCount = await antRows.count();
+      const rows: Array<{ details: string; date: string; delta: string }> = [];
+      for (let rowIndex = 0; rowIndex < antCount; rowIndex += 1) {
+        const cells = await antRows.nth(rowIndex).locator(".ant-table-cell").allTextContents();
+        if (cells.length >= 3) {
+          rows.push({
+            details: cells[0]?.trim() || "",
+            date: cells[1]?.trim() || "",
+            delta: cells[2]?.trim() || ""
+          });
+        }
+      }
+      return rows;
+    } catch (error) {
+      const message = (error as Error).message || "";
+      if (message.includes("Execution context was destroyed") || message.includes("Target closed")) {
+        await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
+        await page.waitForTimeout(500);
+        continue;
+      }
+      throw error;
+    }
+  }
+  return [];
 }
 
 async function paginateUsageTable(page: Page, range: DateRange | null) {
@@ -771,7 +822,6 @@ export async function collectManusInvoices(
       continue;
     }
 
-    await navigateToBilling(page);
     const usageInvoices = await tryUsageHistory(page, range).catch(() => []);
     if (usageInvoices.length) {
       if (ownsPage) {
@@ -779,6 +829,8 @@ export async function collectManusInvoices(
       }
       return usageInvoices;
     }
+
+    await navigateToBilling(page);
     const discovered = await collectBillingUrls(page);
     discovered.forEach((candidate) => enqueue(candidate, page.url()));
 
