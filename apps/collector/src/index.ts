@@ -482,9 +482,10 @@ function buildDevtoolsUrl(req: express.Request, session: LoginSession, target: D
     ? new URL(publicBase)
     : new URL(`${getRequestProtocol(req)}://${getRequestHost(req)}`);
   const prefix = `${baseUrl.origin}/collector/devtools/${session.id}/${session.key}`;
-  const wsHost = `${baseUrl.host}/collector/devtools/${session.id}/${session.key}`;
   const targetPath = `/devtools/page/${target.id}`;
-  return `${prefix}/devtools/inspector.html?ws=${wsHost}${targetPath}&${cacheBuster}`;
+  const wsProtocol = baseUrl.protocol === "https:" ? "wss" : "ws";
+  const wsUrl = `${wsProtocol}://${baseUrl.host}/collector/devtools/${session.id}/${session.key}${targetPath}`;
+  return `${prefix}/devtools/inspector.html?ws=${encodeURIComponent(wsUrl)}&${cacheBuster}`;
 }
 
 async function closeSession(sessionId: string) {
