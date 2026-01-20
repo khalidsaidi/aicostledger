@@ -163,6 +163,24 @@ type LoginSession = {
 const sessions = new Map<string, LoginSession>();
 const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 
+function isSessionExpired(session: LoginSession) {
+  if (Date.now() - session.createdAtMs > SESSION_TTL_MS) {
+    return true;
+  }
+  if (session.browserProcess && session.browserProcess.exitCode !== null) {
+    return true;
+  }
+  return false;
+}
+
+function respondSessionExpired(res: express.Response) {
+  res.status(410);
+  res.setHeader("content-type", "text/html; charset=utf-8");
+  res.send(
+    "<!doctype html><meta charset=\"utf-8\"><title>Session expired</title><p>Collector session expired. Go back and click Connect again.</p>"
+  );
+}
+
 async function runCommand(command: string, args: string[], options?: { cwd?: string }) {
   return new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, {
@@ -945,6 +963,11 @@ app.post(
       res.status(404).json({ error: "Session not found" });
       return;
     }
+    if (isSessionExpired(session)) {
+      await closeSession(session.id);
+      res.status(410).json({ error: "Session expired" });
+      return;
+    }
     if (session.uid !== uid) {
       res.status(403).json({ error: "Forbidden" });
       return;
@@ -997,6 +1020,11 @@ app.post(
     const session = sessions.get(sessionId);
     if (!session || session.key !== sessionKey) {
       res.status(404).json({ error: "Session not found" });
+      return;
+    }
+    if (isSessionExpired(session)) {
+      await closeSession(session.id);
+      res.status(410).json({ error: "Session expired" });
       return;
     }
     if (session.uid !== uid) {
@@ -1093,6 +1121,11 @@ app.use("/collector/devtools/:sessionId/:sessionKey", async (req, res) => {
     res.status(404).end("Session not found");
     return;
   }
+  if (isSessionExpired(session)) {
+    await closeSession(session.id);
+    respondSessionExpired(res);
+    return;
+  }
   const prefix = `/collector/devtools/${sessionId}/${sessionKey}`;
   const originalUrl = req.originalUrl || req.url || "/";
   const targetPath = stripDevtoolsPrefix(originalUrl, prefix);
@@ -1170,7 +1203,8 @@ app.use("/collector/devtools/:sessionId/:sessionKey", async (req, res) => {
       res.send(injectedHtml);
       return;
     } catch (error) {
-      res.status(502).end("Proxy error");
+      await closeSession(session.id);
+      respondSessionExpired(res);
       return;
     }
   }
@@ -1189,15 +1223,24 @@ app.use("/collector/devtools/:sessionId/:sessionKey", async (req, res) => {
       res.send(patchedBody);
       return;
     } catch (error) {
-      res.status(502).end("Proxy error");
+      await closeSession(session.id);
+      respondSessionExpired(res);
       return;
     }
   }
 
   req.url = targetPath;
-  proxy.web(req, res, {
-    target: `http://127.0.0.1:${session.debugPort}`
-  });
+  proxy.web(
+    req,
+    res,
+    {
+      target: `http://127.0.0.1:${session.debugPort}`
+    },
+    async () => {
+      await closeSession(session.id);
+      respondSessionExpired(res);
+    }
+  );
 });
 
 app.use((_err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -1207,7 +1250,7 @@ app.use((_err: Error, _req: express.Request, res: express.Response, _next: expre
 setInterval(() => {
   const now = Date.now();
   for (const [sessionId, session] of sessions.entries()) {
-    if (now - session.createdAtMs > SESSION_TTL_MS) {
+    if (now - session.createdAtMs > SESSION_TTL_MS || isSessionExpired(session)) {
       closeSession(sessionId).catch(() => undefined);
     }
   }
@@ -1229,6 +1272,11 @@ server.on("upgrade", (req, socket, head) => {
   }
   const session = sessions.get(sessionId);
   if (!session || session.key !== sessionKey) {
+    socket.destroy();
+    return;
+  }
+  if (isSessionExpired(session)) {
+    closeSession(sessionId).catch(() => undefined);
     socket.destroy();
     return;
   }
