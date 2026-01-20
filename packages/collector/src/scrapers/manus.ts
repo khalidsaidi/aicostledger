@@ -337,7 +337,7 @@ async function paginateUsageTable(page: Page, range: DateRange | null) {
   };
 
   let pageCount = 0;
-  let previousEarliest: Date | null = null;
+  let previousEarliest: number | null = null;
 
   while (pageCount < MAX_USAGE_PAGES) {
     const { rows, duplicate } = await readPage();
@@ -345,14 +345,15 @@ async function paginateUsageTable(page: Page, range: DateRange | null) {
       break;
     }
 
-    let earliest: Date | null = null;
+    let earliestTimestamp: number | null = null;
     rows.forEach((row) => {
       const date = parseUsageDate(row.date);
       if (!date) {
         return;
       }
-      if (!earliest || date < earliest) {
-        earliest = date;
+      const timestamp = date.getTime();
+      if (earliestTimestamp === null || timestamp < earliestTimestamp) {
+        earliestTimestamp = timestamp;
       }
       const delta = parseCreditsDelta(row.delta);
       if (delta === null || !withinRange(date, range)) {
@@ -370,18 +371,18 @@ async function paginateUsageTable(page: Page, range: DateRange | null) {
 
     pageCount += 1;
 
-    if (range?.start && earliest && earliest < range.start) {
+    if (range?.start && earliestTimestamp !== null && earliestTimestamp < range.start.getTime()) {
       break;
     }
 
-    if (!direction && previousEarliest) {
-      if (earliest && earliest < previousEarliest) {
+    if (!direction && previousEarliest !== null) {
+      if (earliestTimestamp !== null && earliestTimestamp < previousEarliest) {
         direction = "next";
-      } else if (earliest && earliest > previousEarliest) {
+      } else if (earliestTimestamp !== null && earliestTimestamp > previousEarliest) {
         direction = "prev";
       }
     }
-    previousEarliest = earliest;
+    previousEarliest = earliestTimestamp;
 
     if (!direction) {
       const nextBtn = getButton("next");
