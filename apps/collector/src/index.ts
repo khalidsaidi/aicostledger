@@ -49,6 +49,37 @@ const STEALTH_INIT_SCRIPT = `
   }
 })();
 `;
+const CURSOR_OVERLAY_SCRIPT = `
+(() => {
+  if (window.__aicostledgerCursorOverlay) {
+    return;
+  }
+  window.__aicostledgerCursorOverlay = true;
+  const install = () => {
+    if (!document.body) {
+      requestAnimationFrame(install);
+      return;
+    }
+    if (document.getElementById("__aicostledger_cursor")) {
+      return;
+    }
+    const cursor = document.createElement("div");
+    cursor.id = "__aicostledger_cursor";
+    cursor.style.cssText =
+      "position:fixed;left:0;top:0;width:12px;height:12px;border:2px solid #ff3b30;" +
+      "border-radius:50%;background:rgba(255,59,48,0.2);pointer-events:none;" +
+      "z-index:2147483647;transform:translate(-50%,-50%)";
+    document.body.appendChild(cursor);
+    const move = (event) => {
+      cursor.style.left = event.clientX + "px";
+      cursor.style.top = event.clientY + "px";
+    };
+    document.addEventListener("mousemove", move, { passive: true });
+    document.addEventListener("pointermove", move, { passive: true });
+  };
+  install();
+})();
+`;
 
 const XVFB_DISPLAY = process.env.XVFB_DISPLAY || ":99";
 let xvfbProcess: ReturnType<typeof spawn> | null = null;
@@ -367,10 +398,32 @@ async function launchLoginSession(uid: string, providerId: ProviderId) {
   };
 
   sessions.set(sessionId, session);
+  await installCursorOverlay(session.debugPort);
   return session;
 }
 
 type DevtoolsTarget = { id: string };
+
+async function installCursorOverlay(debugPort: number) {
+  try {
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`, {
+      timeout: 10_000
+    });
+    const context = browser.contexts()[0];
+    if (!context) {
+      await browser.close();
+      return;
+    }
+    await context.addInitScript(CURSOR_OVERLAY_SCRIPT);
+    const pages = context.pages();
+    for (const page of pages) {
+      await page.evaluate(CURSOR_OVERLAY_SCRIPT).catch(() => undefined);
+    }
+    await browser.close();
+  } catch (error) {
+    console.warn("Cursor overlay injection failed", (error as Error).message || error);
+  }
+}
 
 async function resolveDevtoolsTarget(session: LoginSession): Promise<DevtoolsTarget> {
   const provider = getProvider(session.providerId);
