@@ -483,9 +483,8 @@ function buildDevtoolsUrl(req: express.Request, session: LoginSession, target: D
     : new URL(`${getRequestProtocol(req)}://${getRequestHost(req)}`);
   const prefix = `${baseUrl.origin}/collector/devtools/${session.id}/${session.key}`;
   const targetPath = `/devtools/page/${target.id}`;
-  const wsProtocol = baseUrl.protocol === "https:" ? "wss" : "ws";
-  const wsUrl = `${wsProtocol}://${baseUrl.host}/collector/devtools/${session.id}/${session.key}${targetPath}`;
-  return `${prefix}/devtools/inspector.html?ws=${encodeURIComponent(wsUrl)}&${cacheBuster}`;
+  const wsPath = `${baseUrl.host}/collector/devtools/${session.id}/${session.key}${targetPath}`;
+  return `${prefix}/devtools/inspector.html?ws=${encodeURIComponent(wsPath)}&${cacheBuster}`;
 }
 
 async function closeSession(sessionId: string) {
@@ -1197,6 +1196,20 @@ app.use("/collector/devtools/:sessionId/:sessionKey", async (req, res) => {
   const targetPath = stripDevtoolsPrefix(originalUrl, prefix);
 
   if (targetPath.startsWith("/devtools/inspector.html")) {
+    const baseUrl = new URL(`${getRequestProtocol(req)}://${getRequestHost(req)}`);
+    const requestUrl = new URL(req.originalUrl || req.url || "/", baseUrl);
+    const wsParam = requestUrl.searchParams.get("ws");
+    if (wsParam) {
+      let normalizedWs = wsParam;
+      normalizedWs = normalizedWs.replace(/^wss?:\/\//, "");
+      normalizedWs = normalizedWs.replace(/^wss\/\//, "");
+      normalizedWs = normalizedWs.replace(/^ws\/\//, "");
+      if (normalizedWs !== wsParam) {
+        requestUrl.searchParams.set("ws", normalizedWs);
+        res.redirect(302, `${requestUrl.pathname}${requestUrl.search}`);
+        return;
+      }
+    }
     try {
       const targetUrl = `http://127.0.0.1:${session.debugPort}${targetPath}`;
       const response = await fetch(targetUrl);
@@ -1261,7 +1274,19 @@ app.use("/collector/devtools/:sessionId/:sessionKey", async (req, res) => {
         /<meta[^>]+http-equiv=['"]?Content-Security-Policy['"]?[^>]*>/gi,
         ""
       );
-      const injectedHtml = relaxedHtml.replace(/<head([^>]*)>/i, `<head$1>${wsUpgradeScript}`);
+      let injectedHtml = relaxedHtml;
+      if (/<head[^>]*>/i.test(relaxedHtml)) {
+        injectedHtml = relaxedHtml.replace(/<head([^>]*)>/i, `<head$1>${wsUpgradeScript}`);
+      } else if (/<script[^>]+type=['"]module['"][^>]*>/i.test(relaxedHtml)) {
+        injectedHtml = relaxedHtml.replace(
+          /<script[^>]+type=['"]module['"][^>]*>/i,
+          `${wsUpgradeScript}$&`
+        );
+      } else if (/<body[^>]*>/i.test(relaxedHtml)) {
+        injectedHtml = relaxedHtml.replace(/<body([^>]*)>/i, `<body$1>${wsUpgradeScript}`);
+      } else {
+        injectedHtml = `${wsUpgradeScript}${relaxedHtml}`;
+      }
       res.status(response.status);
       res.setHeader("content-type", response.headers.get("content-type") || "text/html");
       res.setHeader(
