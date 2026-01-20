@@ -1243,7 +1243,9 @@ app.use("/collector/devtools/:sessionId/:sessionKey", async (req, res) => {
   window.WebSocket = function (url, protocols) {
     let nextUrl = url;
     if (typeof nextUrl === "string") {
-      if (nextUrl.startsWith("ws://wss//")) {
+      if (nextUrl.startsWith("ws://wss://")) {
+        nextUrl = "wss://" + nextUrl.slice("ws://wss://".length);
+      } else if (nextUrl.startsWith("ws://wss//")) {
         nextUrl = "wss://" + nextUrl.slice("ws://wss//".length);
       } else if (window.location.protocol === "https:" && nextUrl.startsWith("ws://")) {
         nextUrl = "wss://" + nextUrl.slice("ws://".length);
@@ -1268,8 +1270,8 @@ app.use("/collector/devtools/:sessionId/:sessionKey", async (req, res) => {
       res.send(injectedHtml);
       return;
     } catch (error) {
-      await closeSession(session.id);
-      respondSessionExpired(res);
+      console.warn("Devtools inspector fetch failed", (error as Error).message || error);
+      res.status(502).send("Devtools unavailable");
       return;
     }
   }
@@ -1281,15 +1283,14 @@ app.use("/collector/devtools/:sessionId/:sessionKey", async (req, res) => {
         headers: { "accept-encoding": "identity" }
       });
       const body = await response.text();
-      const patchedBody = body.replace(/ws:\/\//g, "wss://");
       res.status(response.status);
       res.setHeader("content-type", response.headers.get("content-type") || "application/javascript");
       res.setHeader("cache-control", "no-store");
-      res.send(patchedBody);
+      res.send(body);
       return;
     } catch (error) {
-      await closeSession(session.id);
-      respondSessionExpired(res);
+      console.warn("Devtools asset fetch failed", (error as Error).message || error);
+      res.status(502).send("Devtools unavailable");
       return;
     }
   }
@@ -1302,8 +1303,8 @@ app.use("/collector/devtools/:sessionId/:sessionKey", async (req, res) => {
       target: `http://127.0.0.1:${session.debugPort}`
     },
     async () => {
-      await closeSession(session.id);
-      respondSessionExpired(res);
+      console.warn("Devtools proxy failed for", targetPath);
+      res.status(502).send("Devtools proxy failed");
     }
   );
 });
