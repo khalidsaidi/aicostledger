@@ -57,7 +57,7 @@ export function ConnectorLogin() {
             body: JSON.stringify({
               sessionId: response.sessionId,
               sessionKey: response.sessionKey,
-              url: "https://manus.im/app/billing"
+              url: "https://manus.im/app#settings/usage"
             })
           }).catch(() => undefined);
         }

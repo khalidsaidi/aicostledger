@@ -1,7 +1,7 @@
 import type { BrowserContext, Locator, Page } from "playwright";
 import type { InvoiceRecord } from "../types.js";
 import { getProvider } from "../providers.js";
-import { type DateRange } from "../utils/dates.js";
+import { type DateRange, withinRange } from "../utils/dates.js";
 import { captureSnapshot } from "../utils/snapshot.js";
 import { scrapeTableInvoices } from "./generic.js";
 import { isStripePortal } from "./portal.js";
@@ -26,6 +26,7 @@ const BILLING_KEYWORDS = [
   "upgrade"
 ];
 const MAX_BILLING_URLS = 20;
+const MAX_USAGE_PAGES = 40;
 
 const STRIPE_PORTAL_HINTS = [
   "billing.stripe.com",
@@ -203,6 +204,232 @@ async function clickBillingTarget(page: Page) {
     page.locator("[role='menuitem']:has-text('Plan')").first()
   ];
   return clickFirstVisible(targets);
+}
+
+function parseUsageDate(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    const normalized = trimmed.replace(" ", "T");
+    const date = new Date(normalized.includes("Z") ? normalized : `${normalized}Z`);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+  return new Date(parsed);
+}
+
+function parseCreditsDelta(value: string) {
+  const cleaned = value.replace(/[^0-9.+-]/g, "");
+  if (!cleaned) {
+    return null;
+  }
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
+}
+
+async function waitForUsageTable(page: Page) {
+  const usageHeader = page.locator("text=/usage/i").first();
+  if (await usageHeader.isVisible().catch(() => false)) {
+    await usageHeader.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
+  }
+  const billingCard = page.locator("text=/website usage & billing/i").first();
+  if (await billingCard.isVisible().catch(() => false)) {
+    await billingCard.click({ force: true }).catch(() => undefined);
+    await page.waitForTimeout(400);
+  }
+  await page
+    .locator("text=/credits change/i")
+    .first()
+    .waitFor({ state: "visible", timeout: 10_000 })
+    .catch(() => undefined);
+}
+
+async function collectUsageRows(page: Page) {
+  return page.evaluate(() => {
+    const rows: Array<{ details: string; date: string; delta: string }> = [];
+    const tables = Array.from(document.querySelectorAll("table"));
+    const matchTable = tables.find((table) => {
+      const headers = Array.from(table.querySelectorAll("th"))
+        .map((th) => (th.textContent || "").toLowerCase());
+      return headers.some((text) => text.includes("credits")) && headers.some((text) => text.includes("date"));
+    });
+
+    const readRowCells = (cells: Element[]) =>
+      cells.map((cell) => (cell.textContent || "").trim());
+
+    if (matchTable) {
+      const rowsEl = Array.from(matchTable.querySelectorAll("tbody tr"));
+      rowsEl.forEach((row) => {
+        const cells = readRowCells(Array.from(row.querySelectorAll("td")));
+        if (cells.length >= 3) {
+          rows.push({ details: cells[0] || "", date: cells[1] || "", delta: cells[2] || "" });
+        }
+      });
+      return rows;
+    }
+
+    const antRows = Array.from(document.querySelectorAll(".ant-table-row"));
+    antRows.forEach((row) => {
+      const cells = readRowCells(Array.from(row.querySelectorAll(".ant-table-cell")));
+      if (cells.length >= 3) {
+        rows.push({ details: cells[0] || "", date: cells[1] || "", delta: cells[2] || "" });
+      }
+    });
+    return rows;
+  });
+}
+
+async function paginateUsageTable(page: Page, range: DateRange | null) {
+  const collected: InvoiceRecord[] = [];
+  const seenPages = new Set<string>();
+  let direction: "next" | "prev" | null = null;
+
+  const getPageSignature = (rows: Array<{ details: string; date: string; delta: string }>) =>
+    rows.map((row) => `${row.date}|${row.details}|${row.delta}`).join("||");
+
+  const readPage = async () => {
+    await waitForUsageTable(page);
+    const rows = await collectUsageRows(page);
+    const signature = getPageSignature(rows);
+    if (signature && seenPages.has(signature)) {
+      return { rows, signature, duplicate: true };
+    }
+    if (signature) {
+      seenPages.add(signature);
+    }
+    return { rows, signature, duplicate: false };
+  };
+
+  const clickPageButton = async (button: Locator) => {
+    const className = (await button.getAttribute("class").catch(() => "")) || "";
+    const ariaDisabled = (await button.getAttribute("aria-disabled").catch(() => "")) || "";
+    if (className.includes("disabled") || ariaDisabled === "true") {
+      return false;
+    }
+    const innerButton = button.locator("button").first();
+    if (await innerButton.isVisible().catch(() => false)) {
+      const disabled = await innerButton.isDisabled().catch(() => false);
+      if (disabled) {
+        return false;
+      }
+      await innerButton.click({ force: true }).catch(() => undefined);
+    } else {
+      await button.click({ force: true }).catch(() => undefined);
+    }
+    await page.waitForTimeout(800);
+    return true;
+  };
+
+  const getButton = (dir: "next" | "prev") => {
+    const label = dir === "next" ? /next/i : /previous|prev/i;
+    return page
+      .locator(`.ant-pagination-${dir}, .ant-pagination-item-link`)
+      .filter({ hasText: label })
+      .first();
+  };
+
+  let pageCount = 0;
+  let previousEarliest: Date | null = null;
+
+  while (pageCount < MAX_USAGE_PAGES) {
+    const { rows, duplicate } = await readPage();
+    if (!rows.length || duplicate) {
+      break;
+    }
+
+    let earliest: Date | null = null;
+    rows.forEach((row) => {
+      const date = parseUsageDate(row.date);
+      if (!date) {
+        return;
+      }
+      if (!earliest || date < earliest) {
+        earliest = date;
+      }
+      const delta = parseCreditsDelta(row.delta);
+      if (delta === null || !withinRange(date, range)) {
+        return;
+      }
+      collected.push({
+        occurredAt: date.toISOString(),
+        amountCents: Math.round(delta * 100),
+        currency: "CREDITS",
+        description: row.details || "Manus usage",
+        invoiceNumber: undefined,
+        invoiceUrl: undefined
+      });
+    });
+
+    pageCount += 1;
+
+    if (range?.start && earliest && earliest < range.start) {
+      break;
+    }
+
+    if (!direction && previousEarliest) {
+      if (earliest && earliest < previousEarliest) {
+        direction = "next";
+      } else if (earliest && earliest > previousEarliest) {
+        direction = "prev";
+      }
+    }
+    previousEarliest = earliest;
+
+    if (!direction) {
+      const nextBtn = getButton("next");
+      if (await nextBtn.count()) {
+        if (await clickPageButton(nextBtn)) {
+          direction = "next";
+          continue;
+        }
+      }
+      const prevBtn = getButton("prev");
+      if (await prevBtn.count()) {
+        if (await clickPageButton(prevBtn)) {
+          direction = "prev";
+          continue;
+        }
+      }
+      break;
+    }
+
+    const button = getButton(direction);
+    if (!(await button.count()) || !(await clickPageButton(button))) {
+      break;
+    }
+  }
+
+  return collected;
+}
+
+async function tryUsageHistory(page: Page, range: DateRange | null) {
+  const usageLink = page.locator("text=/usage/i").first();
+  if (!(await usageLink.isVisible().catch(() => false))) {
+    await page.evaluate(() => {
+      if (!location.hash.includes("settings/usage")) {
+        location.hash = "settings/usage";
+      }
+    }).catch(() => undefined);
+    await page.waitForTimeout(600);
+  } else {
+    await usageLink.click({ force: true }).catch(() => undefined);
+    await page.waitForTimeout(400);
+  }
+
+  const usageHeader = page.locator("text=/usage/i").first();
+  if (!(await usageHeader.isVisible().catch(() => false))) {
+    return [];
+  }
+
+  return paginateUsageTable(page, range);
 }
 
 async function openBillingMenu(page: Page) {
@@ -544,6 +771,13 @@ export async function collectManusInvoices(
     }
 
     await navigateToBilling(page);
+    const usageInvoices = await tryUsageHistory(page, range).catch(() => []);
+    if (usageInvoices.length) {
+      if (ownsPage) {
+        await page.close().catch(() => undefined);
+      }
+      return usageInvoices;
+    }
     const discovered = await collectBillingUrls(page);
     discovered.forEach((candidate) => enqueue(candidate, page.url()));
 

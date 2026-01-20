@@ -59,6 +59,7 @@ export const PROVIDERS: ProviderConfig[] = [
     startUrl: "https://manus.im/app",
     billingUrls: [
       "https://manus.im/app",
+      "https://manus.im/app#settings/usage",
       "https://manus.im/app/billing",
       "https://manus.im/app/invoices",
       "https://manus.im/app/settings",
