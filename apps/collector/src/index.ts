@@ -130,6 +130,17 @@ function isAllowedEmail(email?: string | null) {
 }
 
 async function requireFirebaseAuth(req: AuthedRequest, res: express.Response, next: express.NextFunction) {
+  if (
+    process.env.AICOSTLEDGER_DEV_AUTH_BYPASS === "1" &&
+    process.env.NODE_ENV !== "production"
+  ) {
+    req.user = {
+      uid: process.env.AICOSTLEDGER_DEV_UID || "dev-user",
+      email: process.env.AICOSTLEDGER_DEV_EMAIL || "dev@example.com"
+    };
+    next();
+    return;
+  }
   const authHeader = req.header("authorization") || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) {
