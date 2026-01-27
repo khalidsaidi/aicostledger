@@ -20,7 +20,12 @@ export function buildMonthRange(from?: string, to?: string): DateRange | null {
   const startParts = parseMonthPart(from ?? to!);
   const endParts = parseMonthPart(to ?? from!);
   const start = new Date(Date.UTC(startParts.year, startParts.month - 1, 1));
-  const end = new Date(Date.UTC(endParts.year, endParts.month, 0, 23, 59, 59));
+  const monthEnd = new Date(Date.UTC(endParts.year, endParts.month, 0, 23, 59, 59));
+  const now = new Date();
+  const isCurrentOrFutureMonth =
+    endParts.year > now.getUTCFullYear() ||
+    (endParts.year === now.getUTCFullYear() && endParts.month >= now.getUTCMonth() + 1);
+  const end = isCurrentOrFutureMonth && monthEnd > now ? now : monthEnd;
   return { start, end };
 }
 

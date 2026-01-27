@@ -306,6 +306,44 @@ export function Connectors() {
     setSyncing(null);
   }, [apiFetch, fromMonth, toMonth, refreshConnectors]);
 
+  const handleSyncAllRange = useCallback(
+    async (from: string, to: string) => {
+      setSyncing("all");
+      setSyncStatus(null);
+      const results: string[] = [];
+
+      for (const provider of PROVIDERS) {
+        const payload: { providerId: ProviderId; from?: string; to?: string } = {
+          providerId: provider.id,
+          from,
+          to
+        };
+        try {
+          const response = await apiFetch<SyncResponse>("/collector/sync", {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          results.push(`${provider.label}: ${response.items} items`);
+        } catch (error) {
+          results.push(`${provider.label}: ${(error as Error).message || "Sync failed"}`);
+        }
+      }
+
+      setSyncStatus(results.join("\n"));
+      await refreshConnectors();
+      setSyncing(null);
+    },
+    [apiFetch, refreshConnectors]
+  );
+
+  const handleSyncSince2024 = useCallback(() => {
+    const from = "2024-01";
+    const to = formatMonth(new Date());
+    setFromMonth(from);
+    setToMonth(to);
+    void handleSyncAllRange(from, to);
+  }, [handleSyncAllRange]);
+
   const providerLabelById = useMemo(() => {
     const map = new Map<ProviderId, string>();
     PROVIDERS.forEach((provider) => map.set(provider.id, provider.label));
@@ -394,6 +432,13 @@ export function Connectors() {
             <div className="flex flex-wrap items-center gap-2">
               <Button onClick={handleSyncAll} disabled={syncing !== null && syncing !== "all"}>
                 {syncing === "all" ? "Syncing all..." : "Sync all providers"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleSyncSince2024}
+                disabled={syncing !== null && syncing !== "all"}
+              >
+                Sync all since 2024
               </Button>
               {syncStatus ? (
                 <p className="text-xs text-muted-foreground whitespace-pre-line">{syncStatus}</p>
